@@ -16,6 +16,7 @@ if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN не задан!")
 
 sent_offers = set()
+all_current_offers = []  # Храним все текущие объявления
 
 # ============================================
 # ФУНКЦИИ ДЛЯ КНОПОК (КЛАВИАТУРА)
@@ -25,8 +26,9 @@ def get_main_keyboard():
     """Главное меню с кнопками"""
     keyboard = {
         "keyboard": [
-            [{"text": "🔍 Найти сейчас"}, {"text": "📊 Статистика"}],
-            [{"text": "ℹ️ О боте"}, {"text": "🔄 Обновить"}]
+            [{"text": "🔍 Найти сейчас"}, {"text": "📋 Все объявления"}],
+            [{"text": "📊 Статистика"}, {"text": "ℹ️ О боте"}],
+            [{"text": "🔄 Обновить"}]
         ],
         "resize_keyboard": True,
         "one_time_keyboard": False
@@ -46,11 +48,12 @@ def get_help_text():
 ⏱ *Проверка:* Каждые 5 минут
 
 📌 *Как использовать:*
-Нажми на кнопку *🔍 Найти сейчас* — бот покажет свежие объявления
-Нажми *📊 Статистика* — узнаешь сколько объявлений в базе
-Нажми *ℹ️ О боте* — увидишь эту информацию
+🔍 *Найти сейчас* — новые объявления
+📋 *Все объявления* — все текущие
+📊 *Статистика* — информация о боте
+ℹ️ *О боте* — справка
 
-🔔 *Новые объявления* приходят автоматически в группу!
+🔔 *Новые объявления* приходят автоматически!
 
 📱 *Разработчик:* @Sergey_Gordeev0
 🌐 *Сайт:* arenda-4pxf.onrender.com"""
@@ -75,7 +78,7 @@ def parse_kufar():
                 price_elem = item.find('span', class_='styles_price__1N2aA')
                 price = price_elem.text.strip() if price_elem else "Цена не указана"
                 offers.append(f"🏠 {title}\n💰 {price}\n🔗 {link}")
-                if len(offers) >= 10: break
+                if len(offers) >= 20: break
             except: continue
     except Exception as e:
         print(f"Kufar ошибка: {e}")
@@ -98,7 +101,7 @@ def parse_onliner():
                 price_elem = item.find('div', class_='offer__price')
                 price = price_elem.text.strip() if price_elem else "Цена не указана"
                 offers.append(f"🏠 {title}\n💰 {price}\n🔗 {link}")
-                if len(offers) >= 10: break
+                if len(offers) >= 20: break
             except: continue
     except Exception as e:
         print(f"Onliner ошибка: {e}")
@@ -120,7 +123,7 @@ def parse_realt():
                 price_elem = item.find('span', class_='price')
                 price = price_elem.text.strip() if price_elem else "Цена не указана"
                 offers.append(f"🏠 {title}\n💰 {price}\n🔗 {link}")
-                if len(offers) >= 10: break
+                if len(offers) >= 20: break
             except: continue
     except Exception as e:
         print(f"Realt ошибка: {e}")
@@ -142,19 +145,21 @@ def parse_domovita():
                 price_elem = item.find('span', class_='price')
                 price = price_elem.text.strip() if price_elem else "Цена не указана"
                 offers.append(f"🏠 {title}\n💰 {price}\n🔗 {link}")
-                if len(offers) >= 10: break
+                if len(offers) >= 20: break
             except: continue
     except Exception as e:
         print(f"Domovita ошибка: {e}")
     return offers
 
 def get_all_offers():
+    global all_current_offers
     all_offers = []
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Парсинг Логойск...")
     all_offers.extend(parse_kufar())
     all_offers.extend(parse_onliner())
     all_offers.extend(parse_realt())
     all_offers.extend(parse_domovita())
+    all_current_offers = all_offers  # Сохраняем все объявления
     print(f"  Всего: {len(all_offers)}")
     return all_offers
 
@@ -218,50 +223,73 @@ def send_message(chat_id, text):
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    global all_current_offers
     data = request.get_json()
     if data and 'message' in data:
         chat_id = data['message']['chat']['id']
         text = data['message'].get('text', '')
         
         # Обработка команд и кнопок
-        if text in ['/start', '🔍 Найти сейчас']:
-            send_message_with_keyboard(chat_id, "🔍 *Ищу свежие объявления в Логойске...*\n\nПодожди пару секунд ⏳", get_main_keyboard())
+        if text in ['/start']:
+            send_message_with_keyboard(chat_id, "🤖 *Бот для аренды в Логойске*\n\n🏠 *Используй кнопки меню:*", get_main_keyboard())
+        
+        elif text in ['🔍 Найти сейчас']:
+            send_message_with_keyboard(chat_id, "🔍 *Ищу НОВЫЕ объявления в Логойске...*\n\nПодожди пару секунд ⏳", get_main_keyboard())
+            offers = get_all_offers()
+            # Показываем только новые (которых ещё не было)
+            new_offers = set(offers) - sent_offers
+            if new_offers:
+                for offer in list(new_offers)[:10]:
+                    send_message(chat_id, f"🆕 *НОВОЕ!*\n\n{offer}")
+                    time.sleep(0.5)
+                if len(new_offers) > 10:
+                    send_message(chat_id, f"📌 *Показано 10 из {len(new_offers)} новых объявлений*")
+                send_message_with_keyboard(chat_id, "✅ *Готово!*", get_main_keyboard())
+            else:
+                send_message_with_keyboard(chat_id, "😔 *Новых объявлений в Логойске нет.*\n\nНажми *📋 Все объявления* чтобы посмотреть все текущие", get_main_keyboard())
+        
+        elif text in ['📋 Все объявления']:
+            send_message_with_keyboard(chat_id, "📋 *Загружаю ВСЕ объявления в Логойске...*\n\nПодожди пару секунд ⏳", get_main_keyboard())
             offers = get_all_offers()
             if offers:
-                for i, offer in enumerate(offers[:5]):
+                for i, offer in enumerate(offers[:10]):
                     send_message(chat_id, offer)
                     time.sleep(0.5)
-                if len(offers) > 5:
-                    send_message(chat_id, f"📌 *Всего найдено: {len(offers)} объявлений*\nНажми *🔄 Обновить* чтобы посмотреть ещё.")
+                if len(offers) > 10:
+                    send_message(chat_id, f"📌 *Показано 10 из {len(offers)} объявлений*")
+                send_message_with_keyboard(chat_id, "✅ *Готово!*", get_main_keyboard())
             else:
-                send_message_with_keyboard(chat_id, "😔 *В Логойске пока нет новых объявлений.*\n\nПопробуй позже или нажми *🔄 Обновить*", get_main_keyboard())
-                
-        elif text in ['/stats', '📊 Статистика']:
+                send_message_with_keyboard(chat_id, "😔 *В Логойске пока нет объявлений.*", get_main_keyboard())
+        
+        elif text in ['📊 Статистика']:
             stats_text = f"📊 *Статистика бота*\n\n"
-            stats_text += f"🏠 *Отслеживается:* {len(sent_offers)} объявлений\n"
+            stats_text += f"🏠 *Всего объявлений:* {len(all_current_offers)}\n"
+            stats_text += f"🆕 *Новых:* {len(set(all_current_offers) - sent_offers)}\n"
             stats_text += f"📍 *Город:* Логойск\n"
             stats_text += f"🌐 *Сайты:* Kufar, Onliner, Realt, Domovita\n"
             stats_text += f"⏱ *Проверка:* каждые 5 минут\n"
             stats_text += f"🔄 *Обновлено:* {datetime.now().strftime('%d.%m.%Y %H:%M')}"
             send_message_with_keyboard(chat_id, stats_text, get_main_keyboard())
-            
-        elif text in ['/help', 'ℹ️ О боте']:
+        
+        elif text in ['ℹ️ О боте']:
             send_message_with_keyboard(chat_id, get_help_text(), get_main_keyboard())
-            
+        
         elif text in ['🔄 Обновить']:
             send_message_with_keyboard(chat_id, "🔄 *Обновляю данные...*", get_main_keyboard())
             offers = get_all_offers()
             if offers:
-                for i, offer in enumerate(offers[:5]):
+                for i, offer in enumerate(offers[:10]):
                     send_message(chat_id, offer)
                     time.sleep(0.5)
-                if len(offers) > 5:
-                    send_message(chat_id, f"📌 *Показано 5 из {len(offers)} объявлений*")
+                if len(offers) > 10:
+                    send_message(chat_id, f"📌 *Показано 10 из {len(offers)} объявлений*")
+                send_message_with_keyboard(chat_id, "✅ *Обновлено!*", get_main_keyboard())
             else:
-                send_message_with_keyboard(chat_id, "😔 *Новых объявлений нет*", get_main_keyboard())
+                send_message_with_keyboard(chat_id, "😔 *Объявлений не найдено*", get_main_keyboard())
+        
         else:
-            send_message_with_keyboard(chat_id, "🤖 *Используй кнопки меню:*\n\n🔍 Найти сейчас — свежие объявления\n📊 Статистика — информация\nℹ️ О боте — справка", get_main_keyboard())
-            
+            send_message_with_keyboard(chat_id, "🤖 *Используй кнопки меню:*\n\n🔍 Найти сейчас — новые объявления\n📋 Все объявления — все текущие\n📊 Статистика — информация\nℹ️ О боте — справка", get_main_keyboard())
+    
     return "OK", 200
 
 def set_webhook():
@@ -286,7 +314,7 @@ def health():
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("🚀 БОТ АРЕНДА ЛОГОЙСК (С КНОПКАМИ)")
+    print("🚀 БОТ АРЕНДА ЛОГОЙСК")
     print("=" * 50)
     
     print("🔄 Инициализация...")
