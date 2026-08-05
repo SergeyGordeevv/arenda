@@ -1,308 +1,205 @@
 import os
-import requests
-from flask import Flask, request
-import time
 import threading
-from datetime import datetime
+from flask import Flask
+import telebot
+import requests
 from bs4 import BeautifulSoup
+import time
+from datetime import datetime
 
-app = Flask(__name__)
-
+# ============================================
+# НАСТРОЙКИ
+# ============================================
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = -5568949748
-WEBHOOK_URL = "https://arenda-4pxf.onrender.com/webhook"
+CHECK_INTERVAL = 300
 
 if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN не задан!")
 
+bot = telebot.TeleBot(BOT_TOKEN)
 sent_offers = set()
-all_current_offers = []  # Храним все текущие объявления
+app = Flask(__name__)
 
 # ============================================
-# ФУНКЦИИ ДЛЯ КНОПОК (КЛАВИАТУРА)
+# ПАРСИНГ KUFAR (МОБИЛЬНАЯ ВЕРСИЯ)
 # ============================================
-
-def get_main_keyboard():
-    """Главное меню с кнопками"""
-    keyboard = {
-        "keyboard": [
-            [{"text": "🔍 Найти сейчас"}, {"text": "📋 Все объявления"}],
-            [{"text": "📊 Статистика"}, {"text": "ℹ️ О боте"}],
-            [{"text": "🔄 Обновить"}]
-        ],
-        "resize_keyboard": True,
-        "one_time_keyboard": False
-    }
-    return keyboard
-
-def get_help_text():
-    return """🤖 *Бот для аренды жилья в Логойске*
-
-🏠 *Отслеживает сайты:*
-• Kufar.by
-• Onliner.by  
-• Realt.by
-• Domovita.by
-
-📍 *Город:* Логойск
-⏱ *Проверка:* Каждые 5 минут
-
-📌 *Как использовать:*
-🔍 *Найти сейчас* — новые объявления
-📋 *Все объявления* — все текущие
-📊 *Статистика* — информация о боте
-ℹ️ *О боте* — справка
-
-🔔 *Новые объявления* приходят автоматически!
-
-📱 *Разработчик:* @Sergey_Gordeev0
-🌐 *Сайт:* arenda-4pxf.onrender.com"""
-
-# ============================================
-# ФУНКЦИИ ПАРСИНГА (Логойск)
-# ============================================
-
 def parse_kufar():
     offers = []
-    url = "https://re.kufar.by/l/minsk/snyat/kvartiru?city[0]=logojsk"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    url = "https://re.kufar.by/l/minsk/snyat/kvartiru?m=1"
+    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"}
+    
     try:
         r = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(r.text, 'html.parser')
-        for item in soup.find_all('div', class_='styles_wrapper__1sPEG'):
+        
+        for item in soup.find_all('div', class_=lambda x: x and ('item' in x.lower() or 'card' in x.lower())):
             try:
-                link_elem = item.find('a', class_='styles_title__1wEp7')
-                if not link_elem: continue
-                title = link_elem.text.strip()
-                link = "https://re.kufar.by" + link_elem['href'] if link_elem['href'].startswith('/') else link_elem['href']
-                price_elem = item.find('span', class_='styles_price__1N2aA')
+                title_elem = item.find('a', class_=lambda x: x and ('title' in x.lower() or 'link' in x.lower()))
+                if not title_elem:
+                    continue
+                
+                title = title_elem.text.strip()
+                link = title_elem.get('href')
+                if link and link.startswith('/'):
+                    link = "https://re.kufar.by" + link
+                
+                price_elem = item.find('span', class_=lambda x: x and 'price' in x.lower())
                 price = price_elem.text.strip() if price_elem else "Цена не указана"
-                offers.append(f"🏠 {title}\n💰 {price}\n🔗 {link}")
-                if len(offers) >= 20: break
-            except: continue
+                
+                offer_text = f"🏠 {title[:50]}\n💰 {price}\n🔗 {link}"
+                offers.append(offer_text)
+                
+                if len(offers) >= 10:
+                    break
+            except:
+                continue
     except Exception as e:
-        print(f"Kufar ошибка: {e}")
+        print(f"Ошибка Kufar: {e}")
+    
     return offers
 
+# ============================================
+# ПАРСИНГ ONLINER
+# ============================================
 def parse_onliner():
     offers = []
-    url = "https://r.onliner.by/flats/rent/?region=logojsk"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    url = "https://r.onliner.by/flats/rent/"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    
     try:
         r = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(r.text, 'html.parser')
-        for item in soup.find_all('div', class_='form__block'):
-            try:
-                link_elem = item.find('a', class_='offer__link')
-                if not link_elem: continue
-                title_elem = item.find('div', class_='offer__title')
-                title = title_elem.text.strip() if title_elem else "Без названия"
-                link = "https://r.onliner.by" + link_elem['href'] if link_elem['href'].startswith('/') else link_elem['href']
-                price_elem = item.find('div', class_='offer__price')
-                price = price_elem.text.strip() if price_elem else "Цена не указана"
-                offers.append(f"🏠 {title}\n💰 {price}\n🔗 {link}")
-                if len(offers) >= 20: break
-            except: continue
+        
+        for div in soup.find_all('div', class_=lambda x: x and ('offer' in x.lower() or 'form' in x.lower())):
+            a = div.find('a')
+            if a and a.get('href'):
+                txt = a.text.strip()
+                link = "https://r.onliner.by" + a['href'] if a['href'].startswith('/') else a['href']
+                if txt:
+                    offer_text = f"🏠 {txt[:50]}\n🔗 {link}"
+                    offers.append(offer_text)
+                if len(offers) >= 10:
+                    break
     except Exception as e:
-        print(f"Onliner ошибка: {e}")
+        print(f"Ошибка Onliner: {e}")
+    
     return offers
 
+# ============================================
+# ПАРСИНГ REALT
+# ============================================
 def parse_realt():
     offers = []
-    url = "https://realt.by/rent/flats/?location=logojsk"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    url = "https://realt.by/rent/flats/"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    
     try:
         r = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(r.text, 'html.parser')
-        for item in soup.find_all('div', class_='search-item'):
-            try:
-                link_elem = item.find('a', class_='search-item-title')
-                if not link_elem: continue
-                title = link_elem.text.strip()
-                link = "https://realt.by" + link_elem['href'] if link_elem['href'].startswith('/') else link_elem['href']
-                price_elem = item.find('span', class_='price')
-                price = price_elem.text.strip() if price_elem else "Цена не указана"
-                offers.append(f"🏠 {title}\n💰 {price}\n🔗 {link}")
-                if len(offers) >= 20: break
-            except: continue
+        
+        for div in soup.find_all('div', class_=lambda x: x and ('item' in x.lower() or 'offer' in x.lower())):
+            a = div.find('a')
+            if a and a.get('href'):
+                txt = a.text.strip()
+                link = "https://realt.by" + a['href'] if a['href'].startswith('/') else a['href']
+                if txt:
+                    offer_text = f"🏠 {txt[:50]}\n🔗 {link}"
+                    offers.append(offer_text)
+                if len(offers) >= 10:
+                    break
     except Exception as e:
-        print(f"Realt ошибка: {e}")
+        print(f"Ошибка Realt: {e}")
+    
     return offers
 
-def parse_domovita():
-    offers = []
-    url = "https://domovita.by/minskaja/logojsk/arenda/kvartiry/"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        r = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(r.text, 'html.parser')
-        for item in soup.find_all('div', class_='object-item'):
-            try:
-                link_elem = item.find('a', class_='link-object')
-                if not link_elem: continue
-                title = link_elem.text.strip()
-                link = "https://domovita.by" + link_elem['href'] if link_elem['href'].startswith('/') else link_elem['href']
-                price_elem = item.find('span', class_='price')
-                price = price_elem.text.strip() if price_elem else "Цена не указана"
-                offers.append(f"🏠 {title}\n💰 {price}\n🔗 {link}")
-                if len(offers) >= 20: break
-            except: continue
-    except Exception as e:
-        print(f"Domovita ошибка: {e}")
-    return offers
-
+# ============================================
+# СБОР ВСЕХ ОБЪЯВЛЕНИЙ
+# ============================================
 def get_all_offers():
-    global all_current_offers
-    all_offers = []
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Парсинг Логойск...")
-    all_offers.extend(parse_kufar())
-    all_offers.extend(parse_onliner())
-    all_offers.extend(parse_realt())
-    all_offers.extend(parse_domovita())
-    all_current_offers = all_offers  # Сохраняем все объявления
-    print(f"  Всего: {len(all_offers)}")
-    return all_offers
+    res = []
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Парсинг...")
+    
+    kufar = parse_kufar()
+    res.extend(kufar)
+    print(f"  Kufar: {len(kufar)}")
+    
+    onliner = parse_onliner()
+    res.extend(onliner)
+    print(f"  Onliner: {len(onliner)}")
+    
+    realt = parse_realt()
+    res.extend(realt)
+    print(f"  Realt: {len(realt)}")
+    
+    print(f"  Всего: {len(res)}")
+    return res
 
 # ============================================
-# ФОНОВЫЙ МОНИТОРИНГ (АВТО-УВЕДОМЛЕНИЯ)
+# МОНИТОРИНГ
 # ============================================
-
-def send_new_offers():
+def monitor():
     global sent_offers
     while True:
         try:
-            current = set(get_all_offers())
-            new = current - sent_offers
-            
+            curr = set(get_all_offers())
+            new = curr - sent_offers
             if new:
-                print(f"🔔 НОВЫХ ОБЪЯВЛЕНИЙ: {len(new)}")
-                for offer in new:
+                print(f"🔔 НОВЫХ: {len(new)}")
+                for o in new:
                     try:
-                        send_message(CHAT_ID, f"🔔 НОВОЕ ОБЪЯВЛЕНИЕ В ЛОГОЙСКЕ!\n\n{offer}")
+                        bot.send_message(CHAT_ID, f"🔔 НОВОЕ ОБЪЯВЛЕНИЕ!\n\n{o}")
                         print("  ✅ Отправлено")
-                        time.sleep(2)
+                        time.sleep(1)
                     except Exception as e:
                         print(f"  ❌ Ошибка отправки: {e}")
-                sent_offers = current
+                sent_offers = curr
             else:
-                print("Новых объявлений нет")
+                print("Новых нет")
         except Exception as e:
-            print(f"Ошибка в мониторинге: {e}")
-        
-        time.sleep(300)
+            print(f"Ошибка мониторинга: {e}")
+        time.sleep(CHECK_INTERVAL)
 
 # ============================================
-# ОТПРАВКА СООБЩЕНИЙ С КНОПКАМИ
+# КОМАНДЫ БОТА
 # ============================================
+@bot.message_handler(commands=['start'])
+def start_cmd(message):
+    bot.reply_to(message, "🤖 Бот для мониторинга аренды жилья в Логойске и Минской области!\n\n"
+                          "📌 Отслеживает:\n"
+                          "• Kufar.by\n"
+                          "• Onliner.by\n"
+                          "• Realt.by\n\n"
+                          "🔄 Проверка каждые 5 минут\n"
+                          "📊 Статистика: /stats\n"
+                          "ℹ️ О боте: /about")
 
-def send_message_with_keyboard(chat_id, text, keyboard=None):
-    """Отправляет сообщение с клавиатурой"""
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown",
-        "reply_markup": keyboard or get_main_keyboard()
-    }
-    try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        print(f"Ошибка отправки: {e}")
+@bot.message_handler(commands=['stats'])
+def stats_cmd(message):
+    bot.reply_to(message, f"📊 СТАТИСТИКА\n\n"
+                          f"• Отслеживается: {len(sent_offers)} объявлений\n"
+                          f"• Интервал: {CHECK_INTERVAL} сек (5 мин)\n"
+                          f"• Сайтов: 3 (Kufar, Onliner, Realt)\n"
+                          f"• Статус: ✅ Активен")
 
-def send_message(chat_id, text):
-    """Отправляет обычное сообщение"""
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    try:
-        requests.post(url, json={"chat_id": chat_id, "text": text})
-    except Exception as e:
-        print(f"Ошибка отправки: {e}")
+@bot.message_handler(commands=['about'])
+def about_cmd(message):
+    bot.reply_to(message, "ℹ️ ИНФОРМАЦИЯ О БОТЕ\n\n"
+                          "🤖 Бот создан для мониторинга аренды жилья\n"
+                          "📍 Отслеживает: Логойск и Минская область\n"
+                          "🏠 Сайты: Kufar, Onliner, Realt\n"
+                          "⏱️ Проверка: каждые 5 минут\n"
+                          "🆓 Хостинг: Render.com (бесплатный)\n"
+                          "📦 Версия: 2.0\n"
+                          "👨‍💻 Разработчик: Sergey Gordeev\n"
+                          "📅 Дата создания: Август 2026")
 
 # ============================================
-# ВЕБХУК
+# FLASK
 # ============================================
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    global all_current_offers
-    data = request.get_json()
-    if data and 'message' in data:
-        chat_id = data['message']['chat']['id']
-        text = data['message'].get('text', '')
-        
-        # Обработка команд и кнопок
-        if text in ['/start']:
-            send_message_with_keyboard(chat_id, "🤖 *Бот для аренды в Логойске*\n\n🏠 *Используй кнопки меню:*", get_main_keyboard())
-        
-        elif text in ['🔍 Найти сейчас']:
-            send_message_with_keyboard(chat_id, "🔍 *Ищу НОВЫЕ объявления в Логойске...*\n\nПодожди пару секунд ⏳", get_main_keyboard())
-            offers = get_all_offers()
-            # Показываем только новые (которых ещё не было)
-            new_offers = set(offers) - sent_offers
-            if new_offers:
-                for offer in list(new_offers)[:10]:
-                    send_message(chat_id, f"🆕 *НОВОЕ!*\n\n{offer}")
-                    time.sleep(0.5)
-                if len(new_offers) > 10:
-                    send_message(chat_id, f"📌 *Показано 10 из {len(new_offers)} новых объявлений*")
-                send_message_with_keyboard(chat_id, "✅ *Готово!*", get_main_keyboard())
-            else:
-                send_message_with_keyboard(chat_id, "😔 *Новых объявлений в Логойске нет.*\n\nНажми *📋 Все объявления* чтобы посмотреть все текущие", get_main_keyboard())
-        
-        elif text in ['📋 Все объявления']:
-            send_message_with_keyboard(chat_id, "📋 *Загружаю ВСЕ объявления в Логойске...*\n\nПодожди пару секунд ⏳", get_main_keyboard())
-            offers = get_all_offers()
-            if offers:
-                for i, offer in enumerate(offers[:10]):
-                    send_message(chat_id, offer)
-                    time.sleep(0.5)
-                if len(offers) > 10:
-                    send_message(chat_id, f"📌 *Показано 10 из {len(offers)} объявлений*")
-                send_message_with_keyboard(chat_id, "✅ *Готово!*", get_main_keyboard())
-            else:
-                send_message_with_keyboard(chat_id, "😔 *В Логойске пока нет объявлений.*", get_main_keyboard())
-        
-        elif text in ['📊 Статистика']:
-            stats_text = f"📊 *Статистика бота*\n\n"
-            stats_text += f"🏠 *Всего объявлений:* {len(all_current_offers)}\n"
-            stats_text += f"🆕 *Новых:* {len(set(all_current_offers) - sent_offers)}\n"
-            stats_text += f"📍 *Город:* Логойск\n"
-            stats_text += f"🌐 *Сайты:* Kufar, Onliner, Realt, Domovita\n"
-            stats_text += f"⏱ *Проверка:* каждые 5 минут\n"
-            stats_text += f"🔄 *Обновлено:* {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-            send_message_with_keyboard(chat_id, stats_text, get_main_keyboard())
-        
-        elif text in ['ℹ️ О боте']:
-            send_message_with_keyboard(chat_id, get_help_text(), get_main_keyboard())
-        
-        elif text in ['🔄 Обновить']:
-            send_message_with_keyboard(chat_id, "🔄 *Обновляю данные...*", get_main_keyboard())
-            offers = get_all_offers()
-            if offers:
-                for i, offer in enumerate(offers[:10]):
-                    send_message(chat_id, offer)
-                    time.sleep(0.5)
-                if len(offers) > 10:
-                    send_message(chat_id, f"📌 *Показано 10 из {len(offers)} объявлений*")
-                send_message_with_keyboard(chat_id, "✅ *Обновлено!*", get_main_keyboard())
-            else:
-                send_message_with_keyboard(chat_id, "😔 *Объявлений не найдено*", get_main_keyboard())
-        
-        else:
-            send_message_with_keyboard(chat_id, "🤖 *Используй кнопки меню:*\n\n🔍 Найти сейчас — новые объявления\n📋 Все объявления — все текущие\n📊 Статистика — информация\nℹ️ О боте — справка", get_main_keyboard())
-    
-    return "OK", 200
-
-def set_webhook():
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
-    try:
-        r = requests.post(url, json={"url": WEBHOOK_URL})
-        print(f"Webhook установлен: {r.json()}")
-    except Exception as e:
-        print(f"Ошибка установки webhook: {e}")
-
 @app.route('/')
 def index():
-    return "🤖 Бот для аренды в Логойске работает!"
+    return "🤖 Бот для аренды жилья запущен!"
 
 @app.route('/health')
 def health():
@@ -311,23 +208,18 @@ def health():
 # ============================================
 # ЗАПУСК
 # ============================================
-
 if __name__ == "__main__":
     print("=" * 50)
-    print("🚀 БОТ АРЕНДА ЛОГОЙСК")
+    print("🤖 БОТ АРЕНДА БЕЛАРУСЬ")
     print("=" * 50)
-    
+
     print("🔄 Инициализация...")
     sent_offers = set(get_all_offers())
     print(f"✅ Отслеживается {len(sent_offers)} объявлений")
-    
-    monitor_thread = threading.Thread(target=send_new_offers, daemon=True)
-    monitor_thread.start()
-    print("✅ Авто-уведомления запущены")
-    
-    set_webhook()
-    
+
+    threading.Thread(target=monitor, daemon=True).start()
+    print("🚀 Бот запущен!")
+
     port = int(os.environ.get("PORT", 5000))
-    print(f"🚀 Сервер запущен на порту {port}")
-    print("=" * 50)
+    print(f"🚀 Веб-сервер на порту {port}...")
     app.run(host="0.0.0.0", port=port)
