@@ -12,7 +12,7 @@ from datetime import datetime
 # ============================================
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = -5568949748
-CHECK_INTERVAL = 300  # 5 минут
+CHECK_INTERVAL = 300
 
 if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN не задан!")
@@ -22,7 +22,7 @@ sent_offers = set()
 app = Flask(__name__)
 
 # ============================================
-# ПАРСИНГ KUFAR (мобильная версия)
+# ПАРСИНГ KUFAR (МОБИЛЬНАЯ ВЕРСИЯ)
 # ============================================
 def parse_kufar():
     offers = []
@@ -136,7 +136,7 @@ def get_all_offers():
     return res
 
 # ============================================
-# МОНИТОРИНГ (ПРОВЕРКА КАЖДЫЕ 5 МИНУТ)
+# МОНИТОРИНГ
 # ============================================
 def monitor():
     global sent_offers
@@ -161,14 +161,28 @@ def monitor():
         time.sleep(CHECK_INTERVAL)
 
 # ============================================
-# КОМАНДА /start (только приветствие)
+# КОМАНДЫ БОТА (/start и /stats)
 # ============================================
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
-    bot.reply_to(message, "🤖 Бот запущен! Отслеживаю объявления на Kufar, Onliner и Realt.")
+    bot.reply_to(message, "🤖 Бот для мониторинга аренды жилья в Логойске и Минской области!\n\n"
+                          "📌 Отслеживает:\n"
+                          "• Kufar.by\n"
+                          "• Onliner.by\n"
+                          "• Realt.by\n\n"
+                          "🔄 Проверка каждые 5 минут\n"
+                          "📊 Статистика: /stats")
+
+@bot.message_handler(commands=['stats'])
+def stats_cmd(message):
+    bot.reply_to(message, f"📊 СТАТИСТИКА\n\n"
+                          f"• Отслеживается: {len(sent_offers)} объявлений\n"
+                          f"• Интервал: {CHECK_INTERVAL} сек (5 мин)\n"
+                          f"• Сайтов: 3 (Kufar, Onliner, Realt)\n"
+                          f"• Статус: ✅ Активен")
 
 # ============================================
-# FLASK (ДЛЯ RENDER)
+# FLASK
 # ============================================
 @app.route('/')
 def index():
@@ -190,15 +204,13 @@ if __name__ == "__main__":
     sent_offers = set(get_all_offers())
     print(f"✅ Отслеживается {len(sent_offers)} объявлений")
     
-    # УБИВАЕМ ВЕБХУК (чтобы бот работал через polling)
+    # Удаляем вебхук (чтобы бот работал через polling)
     bot.remove_webhook()
     print("✅ Вебхук удален")
     
-    # Запускаем мониторинг в фоне
     threading.Thread(target=monitor, daemon=True).start()
-    print("🚀 Бот запущен и мониторит объявления!")
+    print("🚀 Бот запущен!")
     
-    # Запускаем Flask
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Веб-сервер на порту {port}...")
     app.run(host="0.0.0.0", port=port)
