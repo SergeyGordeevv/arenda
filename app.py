@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 
 # ============================================
-# НАСТРОЙКИ (Берутся из переменных окружения)
+# НАСТРОЙКИ
 # ============================================
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = -5568949748
@@ -21,17 +21,133 @@ bot = telebot.TeleBot(BOT_TOKEN)
 sent_offers = set()
 # ============================================
 
-# --- (СЮДА ВСТАВЬТЕ ВАШИ ФУНКЦИИ ПАРСИНГА: parse_kufar, parse_onliner, parse_realt, get_all_offers) ---
-# ... (скопируйте их из вашего файла main.py) ...
+# ============================================
+# ПАРСИНГ KUFAR
+# ============================================
+def parse_kufar():
+    offers = []
+    url = "https://re.kufar.by/l/minsk/snyat/kvartiru"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        items = soup.find_all('div', class_='styles_wrapper__1sPEG')
+        
+        for item in items[:10]:
+            try:
+                title_elem = item.find('a', class_='styles_title__1wEp7')
+                title = title_elem.text.strip() if title_elem else "Без названия"
+                
+                price_elem = item.find('span', class_='styles_price__1N2aA')
+                price = price_elem.text.strip() if price_elem else "Цена не указана"
+                
+                link = "https://re.kufar.by" + title_elem.get('href', '') if title_elem else ""
+                
+                offer_text = f"🏠 {title}\n💰 {price}\n🔗 {link}"
+                offers.append(offer_text)
+            except:
+                continue
+    except:
+        pass
+    
+    return offers
 
 # ============================================
-# ФУНКЦИЯ МОНИТОРИНГА (запускается в фоне)
+# ПАРСИНГ ONLINER
+# ============================================
+def parse_onliner():
+    offers = []
+    url = "https://r.onliner.by/flats/rent/"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        items = soup.find_all('div', class_='form__block')
+        
+        for item in items[:10]:
+            try:
+                title_elem = item.find('div', class_='offer__title')
+                title = title_elem.text.strip() if title_elem else "Без названия"
+                
+                price_elem = item.find('div', class_='offer__price')
+                price = price_elem.text.strip() if price_elem else "Цена не указана"
+                
+                link_elem = item.find('a', class_='offer__link')
+                link = "https://r.onliner.by" + link_elem.get('href', '') if link_elem else ""
+                
+                offer_text = f"🏠 {title}\n💰 {price}\n🔗 {link}"
+                offers.append(offer_text)
+            except:
+                continue
+    except:
+        pass
+    
+    return offers
+
+# ============================================
+# ПАРСИНГ REALT
+# ============================================
+def parse_realt():
+    offers = []
+    url = "https://realt.by/rent/flats/"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        items = soup.find_all('div', class_='search-item')
+        
+        for item in items[:10]:
+            try:
+                title_elem = item.find('div', class_='search-item-title')
+                title = title_elem.text.strip() if title_elem else "Без названия"
+                
+                price_elem = item.find('div', class_='price')
+                price = price_elem.text.strip() if price_elem else "Цена не указана"
+                
+                link_elem = item.find('a')
+                link = "https://realt.by" + link_elem.get('href', '') if link_elem else ""
+                
+                offer_text = f"🏠 {title}\n💰 {price}\n🔗 {link}"
+                offers.append(offer_text)
+            except:
+                continue
+    except:
+        pass
+    
+    return offers
+
+# ============================================
+# СБОР ВСЕХ ОБЪЯВЛЕНИЙ (ЭТА ФУНКЦИЯ БЫЛА ПРОПУЩЕНА!)
+# ============================================
+def get_all_offers():
+    all_offers = []
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Начинаю парсинг...")
+    
+    kufar = parse_kufar()
+    all_offers.extend(kufar)
+    print(f"  Kufar: {len(kufar)}")
+    
+    onliner = parse_onliner()
+    all_offers.extend(onliner)
+    print(f"  Onliner: {len(onliner)}")
+    
+    realt = parse_realt()
+    all_offers.extend(realt)
+    print(f"  Realt: {len(realt)}")
+    
+    print(f"  Всего: {len(all_offers)}")
+    return all_offers
+
+# ============================================
+# ФУНКЦИЯ МОНИТОРИНГА
 # ============================================
 def send_new_offers():
     global sent_offers
     while True:
         try:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Начинаю парсинг...")
             current = set(get_all_offers())
             new = current - sent_offers
 
@@ -75,28 +191,24 @@ def health():
     return "OK", 200
 
 # ============================================
-# ЗАПУСК ПРИ ЗАПУСКЕ ПРИЛОЖЕНИЯ
+# ЗАПУСК
 # ============================================
 if __name__ == "__main__":
     print("=" * 50)
     print("🤖 БОТ АРЕНДА БЕЛАРУСЬ (НАЧАЛО ЗАГРУЗКИ)")
     print("=" * 50)
 
-    # Инициализация: запоминаем текущие объявления
     print("🔄 Инициализация...")
     sent_offers = set(get_all_offers())
     print(f"✅ Отслеживается {len(sent_offers)} объявлений")
 
-    # Запускаем мониторинг в отдельном потоке
     monitor_thread = threading.Thread(target=send_new_offers, daemon=True)
     monitor_thread.start()
 
-    # Запускаем polling в отдельном потоке
     bot_thread = threading.Thread(target=start_bot_polling, daemon=True)
     bot_thread.start()
     print("✅ Бот и мониторинг запущены в фоне.")
 
-    # Запускаем Flask-сервер для Render
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Запуск веб-сервера на порту {port}...")
     app.run(host="0.0.0.0", port=port)
