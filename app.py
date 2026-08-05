@@ -7,14 +7,11 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 
-# ============================================
-# НАСТРОЙКИ
-# ============================================
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN не задан!")
 
-CHAT_ID = -5568949748  # ПРОВЕРЬ ЭТОТ ID!
+CHAT_ID = -5568949748
 CHECK_INTERVAL = 300
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -22,7 +19,7 @@ sent_offers = set()
 app = Flask(__name__)
 
 # ============================================
-# ПАРСИНГ KUFAR
+# ПАРСИНГ
 # ============================================
 def parse_kufar():
     offers = []
@@ -52,9 +49,6 @@ def parse_kufar():
         print(f"Ошибка Kufar: {e}")
     return offers
 
-# ============================================
-# ПАРСИНГ ONLINER
-# ============================================
 def parse_onliner():
     offers = []
     url = "https://r.onliner.by/flats/rent/"
@@ -76,9 +70,6 @@ def parse_onliner():
         print(f"Ошибка Onliner: {e}")
     return offers
 
-# ============================================
-# ПАРСИНГ REALT
-# ============================================
 def parse_realt():
     offers = []
     url = "https://realt.by/rent/flats/"
@@ -100,73 +91,59 @@ def parse_realt():
         print(f"Ошибка Realt: {e}")
     return offers
 
-# ============================================
-# СБОР ВСЕХ ОБЪЯВЛЕНИЙ
-# ============================================
 def get_all_offers():
     res = []
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Парсинг...")
-    
     kufar = parse_kufar()
     res.extend(kufar)
     print(f"  Kufar: {len(kufar)}")
-    
     onliner = parse_onliner()
     res.extend(onliner)
     print(f"  Onliner: {len(onliner)}")
-    
     realt = parse_realt()
     res.extend(realt)
     print(f"  Realt: {len(realt)}")
-    
     print(f"  Всего: {len(res)}")
     return res
 
 # ============================================
-# МОНИТОРИНГ НОВЫХ ОБЪЯВЛЕНИЙ
+# МОНИТОРИНГ
 # ============================================
 def monitor_offers():
     global sent_offers
-    print("🔄 Мониторинг объявлений запущен...")
     while True:
         try:
-            current_offers = set(get_all_offers())
-            new_offers = current_offers - sent_offers
-            if new_offers:
-                print(f"🔔 Найдено {len(new_offers)} новых объявлений!")
-                for offer in new_offers:
-                    bot.send_message(CHAT_ID, f"🔔 НОВОЕ ОБЪЯВЛЕНИЕ!\n\n{offer}")
-                    print("  ✅ Отправлено")
-                    time.sleep(1)
-                sent_offers = current_offers
+            current = set(get_all_offers())
+            new = current - sent_offers
+            if new:
+                print(f"🔔 НОВЫХ: {len(new)}")
+                for offer in new:
+                    try:
+                        bot.send_message(CHAT_ID, f"🔔 НОВОЕ ОБЪЯВЛЕНИЕ!\n\n{offer}")
+                        print("  ✅ Отправлено")
+                        time.sleep(1)
+                    except:
+                        pass
+                sent_offers = current
             else:
-                print("Новых объявлений нет.")
+                print("Новых нет")
         except Exception as e:
-            print(f"❌ Ошибка в мониторинге: {e}")
+            print(f"Ошибка: {e}")
         time.sleep(CHECK_INTERVAL)
 
 # ============================================
-# ОБРАБОТЧИК КОМАНД
+# КОМАНДЫ БОТА
 # ============================================
 @bot.message_handler(commands=['start'])
-def handle_start(message):
-    bot.reply_to(message, "🤖 Бот запущен и работает!\n\n"
-                          "📌 Отслеживаю объявления на:\n"
-                          "• Kufar.by\n"
-                          "• Onliner.by\n"
-                          "• Realt.by\n\n"
-                          "🔄 Проверка каждые 5 минут\n"
-                          "📊 Статистика: /stats")
+def start_cmd(message):
+    bot.reply_to(message, "🤖 Бот запущен и работает!")
 
 @bot.message_handler(commands=['stats'])
-def handle_stats(message):
-    bot.reply_to(message, f"📊 СТАТИСТИКА\n\n"
-                          f"• Отслеживается: {len(sent_offers)} объявлений\n"
-                          f"• Интервал: {CHECK_INTERVAL} сек\n"
-                          f"• Статус: ✅ Активен")
+def stats_cmd(message):
+    bot.reply_to(message, f"📊 Объявлений: {len(sent_offers)}")
 
 # ============================================
-# ВЕБ-ИНТЕРФЕЙС ДЛЯ RENDER (КРИТИЧНО ВАЖНО!)
+# ВЕБХУК (ПРИНИМАЕТ СООБЩЕНИЯ ОТ TELEGRAM)
 # ============================================
 @app.route('/', methods=['GET', 'POST'])
 def webhook():
@@ -175,35 +152,17 @@ def webhook():
             bot.process_new_updates([telebot.types.Update.de_json(request.stream.read().decode("utf-8"))])
             return "OK", 200
         except Exception as e:
-            print(f"Ошибка обработки вебхука: {e}")
+            print(f"Ошибка: {e}")
             return "ERROR", 500
-    return "🤖 Бот для аренды жилья запущен!", 200
-
-@app.route('/health')
-def health_check():
-    return "OK", 200
+    return "Бот работает", 200
 
 # ============================================
 # ЗАПУСК
 # ============================================
 if __name__ == "__main__":
-    print("=" * 50)
-    print("🤖 БОТ АРЕНДА БЕЛАРУСЬ")
-    print("=" * 50)
-    
-    print("🔄 Инициализация...")
+    print("🔄 Запуск...")
     sent_offers = set(get_all_offers())
-    print(f"✅ Отслеживается {len(sent_offers)} объявлений")
-    
-    # Удаляем вебхук
     bot.remove_webhook()
-    print("✅ Вебхук удален")
-    
-    # Запускаем мониторинг
     threading.Thread(target=monitor_offers, daemon=True).start()
-    print("🚀 Мониторинг запущен!")
-    
-    # Запускаем веб-сервер
     port = int(os.environ.get("PORT", 5000))
-    print(f"🚀 Веб-сервер на порту {port}...")
     app.run(host="0.0.0.0", port=port)
